@@ -6,7 +6,7 @@ use url_shortener;
 create table if not exists urls(
   id int auto_increment primary key,
   short_code varchar(16) unique not null,
-  long_url text not null,
+  long_url varchar(2000) not null,
   click_count int default 0,
   created_at timestamp default current_timestamp
 );

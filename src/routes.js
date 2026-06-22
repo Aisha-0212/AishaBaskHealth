@@ -13,40 +13,27 @@ router.post("/shorten", async (req, res) => {
   // 1. Get the long URL from the request body
   const { longUrl } = req.body;
 
-  // 2. Validate the Url
+  // 2. Validate input
   if (!longUrl) return res.status(400).json({ error: "longUrl is required" });
+
   try {
+    // 3. Validate URL format
     new URL(longUrl);
   } catch {
-    return res.status(400).json({ error: "longUrl must be valid" });
+    return res.status(400).json({ error: "Invalid URL" });
   }
 
   try {
-    // 3. If this long URL was already shortened, no duplicates
-    const [existing] = await pool.query(
-      "select short_code from urls where long_url = ? limit 1",
-      [longUrl],
-    );
-
-    if (existing.length > 0) {
-      const code = existing[0].short_code;
-      return res.status(200).json({
-        shortCode: code,
-        shortUrl: `${BASE_URL}/${code}`,
-        longUrl,
-      });
-    }
-
     // 4. Generate a new random 7-character short code
     const shortCode = nanoid(7);
 
-    // 5. Save it to the database
-    await pool.query("INSERT INTO urls (short_code, long_url) VALUES (?, ?)", [
+    // 5. Save to database
+    await pool.query("insert into urls (short_code, long_url) values (?, ?)", [
       shortCode,
       longUrl,
     ]);
 
-    // 6. Return the result
+    // 6. Return result
     return res.status(201).json({
       shortCode,
       shortUrl: `${BASE_URL}/${shortCode}`,
@@ -61,35 +48,37 @@ router.post("/shorten", async (req, res) => {
 // ─────────────────────────────────────────
 // GET /:shortCode
 // Redirects to the original long URL
+// Also records the click
 // ─────────────────────────────────────────
 router.get("/:shortCode", async (req, res) => {
   const { shortCode } = req.params;
 
   try {
-    // 1. The short code in the DB
+    // 1. Look up short code in database
     const [rows] = await pool.query(
       "select id, long_url from urls where short_code = ? limit 1",
       [shortCode],
     );
 
     // 2. If not found, return 404
-    if (rows.length === 0)
+    if (rows.length === 0) {
       return res.status(404).json({ error: "Short URL not found" });
+    }
     const { id, long_url } = rows[0];
 
-    // 3. Increment the click counter on the urls table
+    // 3. Increment click count
     await pool.query(
       "update urls set click_count = click_count + 1 where id = ?",
       [id],
     );
 
-    // 4. Insert a row into url_clicks for analytics
+    // 4. Store click in analytics table
     await pool.query(
-      "insert into url_clicks (url_id, ip_address) values (?,?)",
+      "insert into url_clicks (url_id, ip_address) values (?, ?)",
       [id, req.ip],
     );
 
-    // 5. Redirect the user to the original URL
+    // 5. Redirect to original URL
     return res.redirect(302, long_url);
   } catch (err) {
     console.error(err);
@@ -103,26 +92,26 @@ router.get("/:shortCode", async (req, res) => {
 // ─────────────────────────────────────────
 router.get("/analytics/:shortCode", async (req, res) => {
   const { shortCode } = req.params;
-
   try {
-    // 1. Get the URL record
+    // 1. Get URL record from database
     const [rows] = await pool.query(
       "select id, long_url, click_count, created_at from urls where short_code = ? limit 1",
       [shortCode],
     );
 
+    // 2. If not found, return 404
     if (rows.length === 0) {
       return res.status(404).json({ error: "Short URL not found" });
     }
     const url = rows[0];
 
-    // 2. Get the 10 most recent clicks
+    // 3. Get recent clicks
     const [clicks] = await pool.query(
       "select clicked_at, ip_address from url_clicks where url_id = ? order by clicked_at desc limit 10",
       [url.id],
     );
 
-    // 3. Return everything
+    // 4. Return analytics data
     return res.status(200).json({
       shortCode,
       longUrl: url.long_url,
